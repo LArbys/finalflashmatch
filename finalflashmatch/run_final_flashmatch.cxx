@@ -8,6 +8,10 @@
 
 // larlite
 #include "DataFormat/opflash.h"
+#include "DataFormat/vertex.h"
+#include "DataFormat/cluster.h"
+#include "DataFormat/pfpart.h"
+#include "DataFormat/shower.h"
 
 // larcv
 #include "Base/PSet.h"
@@ -56,28 +60,30 @@ int main(int nargs, char** argv ) {
   
   // Opreco data
   larlitecv::DataCoordinator dataco_opreco; // this should load opreco and ssnet file, then we have fucking everything
-  dataco_opreco.configure( cfg_file, "StorageManager", "IOManager", "FFMatch" );
+  //dataco_opreco.configure( cfg_file, "StorageManager", "IOManager", "FFMatch" );
   dataco_opreco.add_inputfile( "1e1p_example/larlite_opreco_104036068.root",   "larlite"   );
-  dataco_opreco.add_inputfile( "1e1p_example/ssnetout_larcv_104036068.root",   "larcv"   );    
+  //dataco_opreco.add_inputfile( "1e1p_example/ssnetout_larcv_104036068.root",   "larcv"   );    
   dataco_opreco.initialize();
 
-  // shower reco data
+  // shower reco data: the driver
   larlitecv::DataCoordinator dataco_showerreco;
-  dataco_showerreco.add_inputfile( "1e1p_example/shower_reco_out_104036068.root",   "larlite"   );
+  //dataco_showerreco.configure( cfg_file, "StorageManager", "IOManager", "FFMatch" );  
+  dataco_showerreco.add_inputfile( "1e1p_example/shower_reco_out_104036068.root",  "larlite"   );
+  dataco_showerreco.add_inputfile( "1e1p_example/ssnetout_larcv_104036068.root",   "larcv"   );      
   dataco_showerreco.initialize();
 
   // proton 3d reco
   TChain ttracker("_recoTree");
   std::vector<int> *preco_status = 0;
   TBranch *breco_status = 0;
-  float proton_endpt[3];
-  float proton_startpt[3];
+  double proton_endpt[3];
+  double proton_startpt[3];
   ttracker.SetBranchAddress( "ProtonStartPoint_X", &proton_startpt[0] );
   ttracker.SetBranchAddress( "ProtonStartPoint_Y", &proton_startpt[1] );
-  ttracker.SetBranchAddress( "ProtonStartPoint_Z", &proton_startpt[1] );    
+  ttracker.SetBranchAddress( "ProtonStartPoint_Z", &proton_startpt[2] );    
   ttracker.SetBranchAddress( "ProtonEndPoint_X", &proton_endpt[0] );
   ttracker.SetBranchAddress( "ProtonEndPoint_Y", &proton_endpt[1] );
-  ttracker.SetBranchAddress( "ProtonEndPoint_Z", &proton_endpt[1] );
+  ttracker.SetBranchAddress( "ProtonEndPoint_Z", &proton_endpt[2] );
   ttracker.SetBranchAddress( "Reco_goodness_v",  &preco_status );
   ttracker.Add( "1e1p_example/tracker_anaout_104036068.root" );  
 
@@ -89,15 +95,22 @@ int main(int nargs, char** argv ) {
 
   // shower reco
   TChain tshower("fShowerTree_nueshowers");
-  float shower_dir[3];
-  float shower_pos[3];
-  float shower_len;
+  double shower_dir[3];
+  double shower_pos[3];
+  double shower_energy[3];
+  double shower_len;
+  double shower_mclen;
   tshower.SetBranchAddress("reco_x",     &shower_pos[0]);
   tshower.SetBranchAddress("reco_y",     &shower_pos[1]);
   tshower.SetBranchAddress("reco_z",     &shower_pos[2]);
   tshower.SetBranchAddress("reco_dcosx", &shower_dir[0]);
   tshower.SetBranchAddress("reco_dcosy", &shower_dir[1]);
   tshower.SetBranchAddress("reco_dcosz", &shower_dir[2]);
+  tshower.SetBranchAddress("reco_energy_U", &shower_energy[0]);
+  tshower.SetBranchAddress("reco_energy_V", &shower_energy[1]);
+  tshower.SetBranchAddress("reco_energy_Y", &shower_energy[2]);  
+  tshower.SetBranchAddress("shower_len", &shower_len);
+  tshower.SetBranchAddress("mc_length",  &shower_mclen);  
   tshower.Add("1e1p_example/showerqualsingle_104036068.root");
   tshower.BuildIndex( "event", "subrun" );
 
@@ -107,6 +120,12 @@ int main(int nargs, char** argv ) {
   larlitecv::GeneralFlashMatchAlgo genflashmatch( genflash_cfg );
 
   // Setup the tracker
+  larcv::AStarTracker astracker_algo;
+  std::string _spline_file="../LArCV/app/Reco3D/Proton_Muon_Range_dEdx_LAr_TSplines.root";
+  astracker_algo.SetSplineFile(_spline_file);
+  astracker_algo.initialize();
+  astracker_algo.SetCompressionFactors(1,6);
+  astracker_algo.SetVerbose(0);
 
   // Setup the contour
   
@@ -138,21 +157,24 @@ int main(int nargs, char** argv ) {
       std::cout << "  error loading opflash info" << std::endl;
 
     // load raw image
-    larcv::EventImage2D* ev_image2d = (larcv::EventImage2D*)dataco_opreco.get_larcv_data( larcv::kProductImage2D, "modimg" );
+    larcv::EventImage2D* ev_image2d = (larcv::EventImage2D*)dataco_showerreco.get_larcv_data( larcv::kProductImage2D, "modimg" );
     const std::vector<larcv::Image2D>& img_v = ev_image2d->Image2DArray();
 
     // load badch image
-    larcv::EventImage2D* ev_badch   = (larcv::EventImage2D*)dataco_opreco.get_larcv_data( larcv::kProductImage2D, "gapchs" );
+    larcv::EventImage2D* ev_badch   = (larcv::EventImage2D*)dataco_showerreco.get_larcv_data( larcv::kProductImage2D, "gapchs" );
     const std::vector<larcv::Image2D>& badch_v = ev_badch->Image2DArray();
 
     // load tagger image
-    larcv::EventImage2D* ev_tagger  = (larcv::EventImage2D*)dataco_opreco.get_larcv_data( larcv::kProductImage2D, "combinedtags" );
+    larcv::EventImage2D* ev_tagger  = (larcv::EventImage2D*)dataco_showerreco.get_larcv_data( larcv::kProductImage2D, "combinedtags" );
     const std::vector<larcv::Image2D>& tagger_v = ev_tagger->Image2DArray();
 
-    // ----------------------
-    // start analysis
-    // ----------------------
-    
+    // load vertex/pf-particle
+    larlite::event_vertex*  ev_vertex  = (larlite::event_vertex*) dataco_showerreco.get_larlite_data( larlite::data::kVertex,     "dl" );
+    larlite::event_pfpart*  ev_pfpart  = (larlite::event_pfpart*) dataco_showerreco.get_larlite_data( larlite::data::kPFParticle, "dl" );    
+    larlite::event_cluster* ev_cluster = (larlite::event_cluster*)dataco_showerreco.get_larlite_data( larlite::data::kCluster,    "dl" );
+    larlite::event_shower*  ev_shower  = (larlite::event_shower*) dataco_showerreco.get_larlite_data( larlite::data::kShower,    "dl" );
+    larlite::event_shower*  ev_shreco  = (larlite::event_shower*) dataco_showerreco.get_larlite_data( larlite::data::kShower,    "showerreco" );        
+        
     std::cout << "  number showers: " << nshowers << std::endl;
     std::cout << "  number of beam-window flashes: " << ev_opflash->size() << std::endl;
 
@@ -161,18 +183,49 @@ int main(int nargs, char** argv ) {
       continue;
     }
 
+    if ( !ev_pfpart->empty() )
+      std::cout << "  has pfparticle: " << ev_pfpart->size() << std::endl;
+    if ( !ev_cluster->empty() )
+      std::cout << "  has cluster: " << ev_cluster->size() << std::endl;
+    if ( ev_vertex->size() )
+      std::cout << "  has vertex: " << ev_vertex->size() << std::endl;
+    if ( ev_shreco->size() )
+      std::cout << "  has shower (showerreco): " << ev_shreco->size() << std::endl;
+    
+
     ULong_t showerbytes = tshower.GetEntryWithIndex( event, subrun );
     if ( showerbytes==0 ) {
       std::cout << "  could not load shower info for (event,subrun)=(" << event << "," << subrun << ")" << std::endl;
       continue;
     }
 
-    // perform analysis
+    // ----------------------
+    // start analysis
+    // ----------------------
 
-    // make the proton
-    float maxstepsize = 0.3;
-    std::vector<std::vector<float> > proton_track;
+    const larlite::vertex& vtx = ev_vertex->front();
+    std::cout << "  vertex: (" << vtx.X() << "," << vtx.Y() << "," << vtx.Z() << ")" << std::endl;
     
+    // make the proton qcluster
+    float maxstepsize = 0.3;
+    flashana::QCluster_t qproton;
+    std::cout << "  proton "
+	      << " start=(" << proton_startpt[0] << "," << proton_startpt[1] << "," << proton_startpt[2] << ") -> "
+	      << " end=(" << proton_endpt[0] << "," << proton_endpt[1] << "," << proton_endpt[2] << ")"
+	      << std::endl;
+    
+    
+    
+    // make shower qcluser
+    const larlite::shower& shreco = ev_shreco->front();
+    flashana::QCluster_t qshower;
+    std::cout << "  shower: "
+	      << " dir=(" << shreco.Direction().X() << "," << shreco.Direction().Y() << "," << shreco.Direction().Z() << ")"
+	      << " dir2=(" << shower_dir[0] << "," << shower_dir[1] << "," << shower_dir[2] << ") "
+	      << " length=" << shreco.Length() << "/" << shower_len
+	      << " mclength=" << shower_mclen
+	      << " energy=(" << shower_energy[0] << "," << shower_energy[1] << "," << shower_energy[2] << ")"
+	      << std::endl;
 
     
   }
