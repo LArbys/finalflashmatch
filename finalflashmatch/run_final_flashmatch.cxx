@@ -106,6 +106,7 @@ int main(int nargs, char** argv ) {
   double shower_energy[3];
   double shower_len;
   double shower_mclen;
+  double shower_mcenergy;
   tshower.SetBranchAddress("reco_x",     &shower_pos[0]);
   tshower.SetBranchAddress("reco_y",     &shower_pos[1]);
   tshower.SetBranchAddress("reco_z",     &shower_pos[2]);
@@ -116,10 +117,36 @@ int main(int nargs, char** argv ) {
   tshower.SetBranchAddress("reco_energy_V", &shower_energy[1]);
   tshower.SetBranchAddress("reco_energy_Y", &shower_energy[2]);  
   tshower.SetBranchAddress("shower_len", &shower_len);
-  tshower.SetBranchAddress("mc_length",  &shower_mclen);  
+  tshower.SetBranchAddress("mc_length",  &shower_mclen);
+  tshower.SetBranchAddress("mc_energy",  &shower_mcenergy);    
   tshower.Add("1e1p_example/showerqualsingle_104036068.root");
   tshower.BuildIndex( "event", "subrun" );
 
+  // output file
+  TFile out("output_finalflash.root","recreate");
+  TTree outtree("ffmatch","Final Flash Match result");
+  float best_chi2;
+  float best_data_totpe;
+  float hypo_totpe;
+  float hypo_pe[32];
+  float hypo_protonpe[32];
+  float hypo_showerpe[32];  
+  float data_pe[32];
+  float vtxpos[3];
+  outtree.Branch("vtxpos",vtxpos,"vtxpos[3]/F");
+  outtree.Branch("chi2",&best_chi2,"chi2/F");
+  outtree.Branch("data_totpe",&best_data_totpe,"data_totpe/F");
+  outtree.Branch("hypo_totpe",&hypo_totpe,"hypo_totpe/F");
+  outtree.Branch("hypo_pe",hypo_pe,"hypo_pe[32]/F");
+  outtree.Branch("data_pe",data_pe,"data_pe[32]/F");
+  outtree.Branch("hypo_protonpe",hypo_protonpe,"hypo_protonpe[32]/F");
+  outtree.Branch("hypo_showerpe",hypo_showerpe,"hypo_showerpe[32]/F");
+
+
+  // --------------
+  // Algo Setup
+  // --------------
+  
   // Setup the FlashMatch Interface
   larcv::PSet genflash_pset = pset.get<larcv::PSet>("GeneralFlashMatchAlgo");
   larlitecv::GeneralFlashMatchAlgoConfig genflash_cfg = larlitecv::GeneralFlashMatchAlgoConfig::MakeConfigFromPSet( genflash_pset );
@@ -133,6 +160,8 @@ int main(int nargs, char** argv ) {
   astracker_algo.SetCompressionFactors(1,6);
   astracker_algo.SetVerbose(0);
 
+
+  
   // Setup the contour
   
   // use shower reco as driver
@@ -219,6 +248,8 @@ int main(int nargs, char** argv ) {
     
     // make the proton qcluster
     flashana::QCluster_t qinteraction;
+    flashana::QCluster_t qshower;
+    flashana::QCluster_t qproton;
 
     // get energy
     std::cout << "  proton energy: ";
@@ -262,6 +293,7 @@ int main(int nargs, char** argv ) {
       float numphotons = proton_dedx*step*19200;
       flashana::QPoint_t qpt( pos[0], pos[1], pos[2], numphotons );
       qinteraction.push_back( qpt );
+      qproton.push_back( qpt );
     }
     
     
@@ -272,12 +304,16 @@ int main(int nargs, char** argv ) {
 	      << " dir2=(" << shower_dir[0] << "," << shower_dir[1] << "," << shower_dir[2] << ") "
 	      << " length=" << shreco.Length() << "/" << shower_len
 	      << " mclength=" << shower_mclen
+	      << " mcenergy=" << shower_mcenergy
 	      << " energy=(" << shower_energy[0] << "," << shower_energy[1] << "," << shower_energy[2] << ")"
 	      << std::endl;
     if ( shower_energy[2]<1.0 )
       shower_energy[2] = 0.5*(shower_energy[0]+shower_energy[1]);
+    shower_energy[2] *= 2.0;
     shower_len = shower_energy[2]/2.4; // MeV / (MeV/cm)
-    shower_len *= 2.0; // lost charge correction
+
+    std::cout << " shower: used energy=" << shower_energy[2] << " used length=" << shower_len << std::endl;
+    
     nsteps = shower_len/maxstepsize+1;
     step = plen/float(nsteps);
     for (int istep=0; istep<=nsteps; istep++) {
@@ -288,6 +324,7 @@ int main(int nargs, char** argv ) {
       float numphotons = (50.0*step)*20000;
       flashana::QPoint_t qpt( pos[0], pos[1], pos[2], numphotons );
       qinteraction.push_back( qpt );
+      qshower.push_back( qpt );
     }
 
 
@@ -296,49 +333,117 @@ int main(int nargs, char** argv ) {
 
     
     // make flash hypothesis
-    flashana::Flash_t hypo = genflashmatch.GenerateUnfittedFlashHypothesis( qinteraction );
+    flashana::Flash_t hypo        = genflashmatch.GenerateUnfittedFlashHypothesis( qinteraction );
+    flashana::Flash_t hypo_proton = genflashmatch.GenerateUnfittedFlashHypothesis( qproton );
+    flashana::Flash_t hypo_shower = genflashmatch.GenerateUnfittedFlashHypothesis( qshower );    
 
     // make flash hist
     std::stringstream hname_hypo;
     hname_hypo << "hflash_" << run << "_" << event << "_" << subrun << "_hypo";
+    std::stringstream hname_hypo_proton;
+    hname_hypo_proton << "hflash_" << run << "_" << event << "_" << subrun << "_hypoproton";
+    std::stringstream hname_hypo_shower;
+    hname_hypo_shower << "hflash_" << run << "_" << event << "_" << subrun << "_hyposhower";
 
     TH1D flashhist_hypo( hname_hypo.str().c_str(),"",32,0,32);
+    TH1D flashhist_hypo_proton( hname_hypo_proton.str().c_str(),"",32,0,32);
+    TH1D flashhist_hypo_shower( hname_hypo_shower.str().c_str(),"",32,0,32);        
     float maxpe_hypo = 0.;
+    float petot_hypo = 0.;
     for (int i=0; i<32; i++){
       flashhist_hypo.SetBinContent( i+1, hypo.pe_v[i] );
+      flashhist_hypo_proton.SetBinContent(i+1, hypo_proton.pe_v[i] );
+      flashhist_hypo_shower.SetBinContent(i+1, hypo_shower.pe_v[i] );      
       if ( maxpe_hypo<hypo.pe_v[i] )
 	maxpe_hypo = hypo.pe_v[i];
+      petot_hypo += hypo.pe_v[i];
     }// num of pmts
+    maxpe_hypo /= petot_hypo;
+    flashhist_hypo.Scale(1.0/petot_hypo);
+    flashhist_hypo_proton.Scale(1.0/petot_hypo);
+    flashhist_hypo_shower.Scale(1.0/petot_hypo);    
     flashhist_hypo.SetLineColor(kRed);
+    flashhist_hypo_proton.SetLineColor(kCyan);
+    flashhist_hypo_shower.SetLineColor(kMagenta);    
     
     std::vector<TH1D*> flashhist_data_v;
+    std::vector<float> petot_data_v;    
     float maxpe_data = 0.;
+
     for ( size_t i=0; i<ev_opflash->size(); i++) {
       std::stringstream hname_data;
       hname_data << "hflash_" << run << "_" << event << "_" << subrun << "_data" << i;
       TH1D* flashhist_data = new TH1D( hname_data.str().c_str(),"",32,0,32);
+      float datatot = 0.;
       for (int ipmt=0; ipmt<32; ipmt++) {
 	flashhist_data->SetBinContent(ipmt+1,dataflash_v[i].pe_v[ipmt]);
+	datatot += dataflash_v[i].pe_v[ipmt];
 	//std::cout << "data [" << ipmt << "] " << dataflash_v[i].pe_v[ipmt] << std::endl;
 	if ( dataflash_v[i].pe_v[ipmt]>maxpe_data )
 	  maxpe_data = dataflash_v[i].pe_v[ipmt];
 	flashhist_data->SetLineColor(kBlack);
       }
+      flashhist_data->Scale( 1.0/datatot );
       flashhist_data_v.push_back( flashhist_data );
+      maxpe_data /= datatot;
+      petot_data_v.push_back( datatot );
     }// end of flashes
     
     TCanvas cflash(hname_hypo.str().c_str(),"",800,600);
     if ( maxpe_hypo<maxpe_data )
       flashhist_hypo.GetYaxis()->SetRangeUser(0,maxpe_data*1.1);
-    flashhist_hypo.Draw();
+    flashhist_hypo.Draw("hist");
+    flashhist_hypo_proton.Draw("histsame");
+    flashhist_hypo_shower.Draw("histsame");
     for ( auto const& phist : flashhist_data_v ) {
       phist->Draw("same");
     }
     hname_hypo << ".png";
 
     cflash.SaveAs( hname_hypo.str().c_str() );
+
+
+    // calculate simple chi2
+    best_chi2 = -1;
+    best_data_totpe = -1;
+    int best_data = 0;
+    int idata = -1;
+    for ( auto& phist : flashhist_data_v ) {
+      idata++;
+      float chi2 = 0.;
+      for (int ipmt=0; ipmt<32; ipmt++) {
+	float pefrac_data = phist->GetBinContent(ipmt+1);
+	float pefrac_hypo = flashhist_hypo.GetBinContent(ipmt+1);
+
+	float pe_data = pefrac_data*petot_data_v[idata];
+	float pefrac_data_err = sqrt(pe_data)/petot_data_v[idata];
+
+	float diff = pefrac_hypo - pefrac_data;
+	
+	std::cout << "[" << ipmt << "] diff=" << diff << " hypo=" << pefrac_hypo << " data=" << pefrac_data << std::endl;
+	
+	// i know this is all fubar
+	if ( pefrac_data_err>0 )
+	  chi2 += (diff*diff)/pefrac_data;
+	else if (pefrac_data_err==0.0 && pefrac_hypo>0){
+	  chi2 += (diff*diff)/pefrac_hypo;
+	}
+	
+      }
+      if ( best_chi2<0 || best_chi2>chi2 ) {
+	best_chi2 = chi2;
+	best_data_totpe = petot_data_v[idata];
+	best_data = idata;
+      }
+    }
+
+    for ( auto& phist : flashhist_data_v )
+      delete phist;
+
+    outtree.Fill();
   }
 
+  out.Write();
   
   return 0;
 }
