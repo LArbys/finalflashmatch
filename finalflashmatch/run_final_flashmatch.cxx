@@ -1,10 +1,13 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <sstream>
 
 // ROOT
 #include "TChain.h"
 #include "TBranch.h"
+#include "TH1D.h"
+#include "TCanvas.h"
 
 // larlite
 #include "DataFormat/opflash.h"
@@ -75,7 +78,8 @@ int main(int nargs, char** argv ) {
   // proton 3d reco
   TChain ttracker("_recoTree");
   std::vector<int> *preco_status = 0;
-  TBranch *breco_status = 0;
+  std::vector<double> *pmuon_energy = 0;
+  std::vector<double> *pproton_energy = 0;
   double proton_endpt[3];
   double proton_startpt[3];
   ttracker.SetBranchAddress( "ProtonStartPoint_X", &proton_startpt[0] );
@@ -85,6 +89,8 @@ int main(int nargs, char** argv ) {
   ttracker.SetBranchAddress( "ProtonEndPoint_Y", &proton_endpt[1] );
   ttracker.SetBranchAddress( "ProtonEndPoint_Z", &proton_endpt[2] );
   ttracker.SetBranchAddress( "Reco_goodness_v",  &preco_status );
+  ttracker.SetBranchAddress( "E_muon_v",         &pmuon_energy );
+  ttracker.SetBranchAddress( "E_proton_v",       &pproton_energy );  
   ttracker.Add( "1e1p_example/tracker_anaout_104036068.root" );  
 
   // shower info
@@ -205,20 +211,62 @@ int main(int nargs, char** argv ) {
 
     const larlite::vertex& vtx = ev_vertex->front();
     std::cout << "  vertex: (" << vtx.X() << "," << vtx.Y() << "," << vtx.Z() << ")" << std::endl;
+
+    // Light Yields
+    // proton: 19200
+    // electron: 20000
+    // muon: 24000
     
     // make the proton qcluster
+    flashana::QCluster_t qinteraction;
+
+    // get energy
+    std::cout << "  proton energy: ";
+    for ( auto& protonenergy : *pproton_energy ) {
+      std::cout << " " << protonenergy;
+    }
+    std::cout << std::endl;
+    
+    // get positions
     float maxstepsize = 0.3;
-    flashana::QCluster_t qproton;
     std::cout << "  proton "
 	      << " start=(" << proton_startpt[0] << "," << proton_startpt[1] << "," << proton_startpt[2] << ") -> "
 	      << " end=(" << proton_endpt[0] << "," << proton_endpt[1] << "," << proton_endpt[2] << ")"
 	      << std::endl;
+    float pdir[3] = {0};
+    float plen = 0.;
+    for (int i=0; i<3; i++) {
+      pdir[i] = proton_endpt[i]-proton_startpt[i];
+      plen += pdir[i]*pdir[i];
+    }
+    plen = sqrt(plen);
+    for (int i=0; i<3; i++)
+      pdir[i] /= plen;
+
+    // get energy from range
+    double proton_energy_fromrange = astracker_algo.GetEnergy("proton",plen); // MeV
+    double proton_dedx = proton_energy_fromrange/plen;
+
+    std::cout << "  proton energy from range: " << proton_energy_fromrange << " MeV"
+	      << " length=" << plen << " cm"
+	      << " de/dx=" << proton_dedx
+	      << std::endl;
+      
+    
+    int nsteps = plen/maxstepsize+1;
+    float step = plen/float(nsteps);
+    for (int istep=0; istep<=nsteps; istep++) {
+      float pos[3];
+      for (int i=0; i<3; i++)
+	pos[i] = proton_startpt[i] + (step*istep)*pdir[i];
+      float numphotons = proton_dedx*step*19200;
+      flashana::QPoint_t qpt( pos[0], pos[1], pos[2], numphotons );
+      qinteraction.push_back( qpt );
+    }
     
     
-    
-    // make shower qcluser
+    // make shower qcluser: each point corresponds to the number of photons
     const larlite::shower& shreco = ev_shreco->front();
-    flashana::QCluster_t qshower;
     std::cout << "  shower: "
 	      << " dir=(" << shreco.Direction().X() << "," << shreco.Direction().Y() << "," << shreco.Direction().Z() << ")"
 	      << " dir2=(" << shower_dir[0] << "," << shower_dir[1] << "," << shower_dir[2] << ") "
@@ -226,8 +274,69 @@ int main(int nargs, char** argv ) {
 	      << " mclength=" << shower_mclen
 	      << " energy=(" << shower_energy[0] << "," << shower_energy[1] << "," << shower_energy[2] << ")"
 	      << std::endl;
+    if ( shower_energy[2]<1.0 )
+      shower_energy[2] = 0.5*(shower_energy[0]+shower_energy[1]);
+    shower_len = shower_energy[2]/2.4; // MeV / (MeV/cm)
+    shower_len *= 2.0; // lost charge correction
+    nsteps = shower_len/maxstepsize+1;
+    step = plen/float(nsteps);
+    for (int istep=0; istep<=nsteps; istep++) {
+      double pos[3];
+      pos[0] = vtx.X() + (step*istep)*shower_dir[0];
+      pos[1] = vtx.Y() + (step*istep)*shower_dir[1];
+      pos[2] = vtx.Z() + (step*istep)*shower_dir[2];      
+      float numphotons = (50.0*step)*20000;
+      flashana::QPoint_t qpt( pos[0], pos[1], pos[2], numphotons );
+      qinteraction.push_back( qpt );
+    }
+
+
+    // convert opflash into flash_t
+    std::vector<flashana::Flash_t> dataflash_v = genflashmatch.MakeDataFlashes( *ev_opflash );
 
     
+    // make flash hypothesis
+    flashana::Flash_t hypo = genflashmatch.GenerateUnfittedFlashHypothesis( qinteraction );
+
+    // make flash hist
+    std::stringstream hname_hypo;
+    hname_hypo << "hflash_" << run << "_" << event << "_" << subrun << "_hypo";
+
+    TH1D flashhist_hypo( hname_hypo.str().c_str(),"",32,0,32);
+    float maxpe_hypo = 0.;
+    for (int i=0; i<32; i++){
+      flashhist_hypo.SetBinContent( i+1, hypo.pe_v[i] );
+      if ( maxpe_hypo<hypo.pe_v[i] )
+	maxpe_hypo = hypo.pe_v[i];
+    }// num of pmts
+    flashhist_hypo.SetLineColor(kRed);
+    
+    std::vector<TH1D*> flashhist_data_v;
+    float maxpe_data = 0.;
+    for ( size_t i=0; i<ev_opflash->size(); i++) {
+      std::stringstream hname_data;
+      hname_data << "hflash_" << run << "_" << event << "_" << subrun << "_data" << i;
+      TH1D* flashhist_data = new TH1D( hname_data.str().c_str(),"",32,0,32);
+      for (int ipmt=0; ipmt<32; ipmt++) {
+	flashhist_data->SetBinContent(ipmt+1,dataflash_v[i].pe_v[ipmt]);
+	//std::cout << "data [" << ipmt << "] " << dataflash_v[i].pe_v[ipmt] << std::endl;
+	if ( dataflash_v[i].pe_v[ipmt]>maxpe_data )
+	  maxpe_data = dataflash_v[i].pe_v[ipmt];
+	flashhist_data->SetLineColor(kBlack);
+      }
+      flashhist_data_v.push_back( flashhist_data );
+    }// end of flashes
+    
+    TCanvas cflash(hname_hypo.str().c_str(),"",800,600);
+    if ( maxpe_hypo<maxpe_data )
+      flashhist_hypo.GetYaxis()->SetRangeUser(0,maxpe_data*1.1);
+    flashhist_hypo.Draw();
+    for ( auto const& phist : flashhist_data_v ) {
+      phist->Draw("same");
+    }
+    hname_hypo << ".png";
+
+    cflash.SaveAs( hname_hypo.str().c_str() );
   }
 
   
