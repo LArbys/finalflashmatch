@@ -10,6 +10,7 @@ INCFLAGS += $(shell larcv-config --includes)
 INCFLAGS += -I$(LARLITE_BASEDIR)/../
 INCFLAGS += -I$(LARLITE_BASEDIR)/UserDev
 INCFLAGS += -I$(LARLITE_BASEDIR)/UserDev/BasicTool
+INCFLAGS += -I$(LARLITE_BASEDIR)/UserDev/SelectionTool
 INCFLAGS += -I$(LARLITECV_BASEDIR)/app
 INCFLAGS += $(shell larlitecv-config --includes)
 INCFLAGS += -I$(LARCV_BASEDIR)/app/ann_1.1.2/include
@@ -17,9 +18,9 @@ INCFLAGS += `root-config --cflags`
 INCFLAGS += -DUSE_OPENCV=1
 
 LDFLAGS += $(shell larcv-config --libs)
-#LDFLAGS += $(shell larlite-config --libs) -lBasicTool_GeoAlgo
-#LDFLAGS += -lLArOpenCV_ImageClusterAlgoClass
 LDFLAGS += $(shell larlitecv-config --libs)
+LDFLAGS += $(shell larlite-config --libs) -lSelectionTool_OpT0FinderAna -lSelectionTool_OpT0FinderApp \
+	-lSelectionTool_OpT0PhotonLibrary -lSelectionTool_OpT0FinderAlgorithms -lSelectionTool_OpT0FinderBase 
 LDFLAGS += `root-config --ldflags --libs`
 
 LIB=libFinalFlashMatch.so
