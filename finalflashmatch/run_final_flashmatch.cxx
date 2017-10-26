@@ -388,6 +388,7 @@ int main(int nargs, char** argv ) {
     float numphotons_proton = 19200.0*(*pproton_energy).front();
     flashana::QPoint_t qptproton( vtx.X(), vtx.Y(), vtx.Z(), numphotons_proton );
     qproton.push_back( qptproton );
+    std::cout << "  proton: numphotons=" << numphotons_proton << std::endl;
     
     
     // make shower qcluser: each point corresponds to the number of photons
