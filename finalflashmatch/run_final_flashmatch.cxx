@@ -16,6 +16,7 @@
 #include "DataFormat/cluster.h"
 #include "DataFormat/pfpart.h"
 #include "DataFormat/shower.h"
+#include "DataFormat/track.h"
 
 // larcv
 #include "Base/PSet.h"
@@ -92,6 +93,8 @@ int main(int nargs, char** argv ) {
   std::vector<int> *preco_status = 0;
   std::vector<double> *pmuon_energy = 0;
   std::vector<double> *pproton_energy = 0;
+  std::vector<double> *plength_v = 0;
+  std::vector<double> *pave_ion_v = 0;    
   double proton_endpt[3];
   double proton_startpt[3];
   int tracker_run;
@@ -100,15 +103,17 @@ int main(int nargs, char** argv ) {
   ttracker.SetBranchAddress( "run",    &tracker_run );
   ttracker.SetBranchAddress( "subrun", &tracker_subrun );
   ttracker.SetBranchAddress( "event",  &tracker_event );
-  ttracker.SetBranchAddress( "ProtonStartPoint_X", &proton_startpt[0] );
-  ttracker.SetBranchAddress( "ProtonStartPoint_Y", &proton_startpt[1] );
-  ttracker.SetBranchAddress( "ProtonStartPoint_Z", &proton_startpt[2] );    
-  ttracker.SetBranchAddress( "ProtonEndPoint_X", &proton_endpt[0] );
-  ttracker.SetBranchAddress( "ProtonEndPoint_Y", &proton_endpt[1] );
-  ttracker.SetBranchAddress( "ProtonEndPoint_Z", &proton_endpt[2] );
-  ttracker.SetBranchAddress( "Reco_goodness_v",  &preco_status );
+  ttracker.SetBranchAddress( "ProtonStartPoint_X", &proton_startpt[0] ); // these are mc
+  ttracker.SetBranchAddress( "ProtonStartPoint_Y", &proton_startpt[1] ); // MC 
+  ttracker.SetBranchAddress( "ProtonStartPoint_Z", &proton_startpt[2] ); // MC   
+  ttracker.SetBranchAddress( "ProtonEndPoint_X", &proton_endpt[0] );     // MC 
+  ttracker.SetBranchAddress( "ProtonEndPoint_Y", &proton_endpt[1] );     // MC
+  ttracker.SetBranchAddress( "ProtonEndPoint_Z", &proton_endpt[2] );     // MC
+  ttracker.SetBranchAddress( "Reco_goodness_v",  &preco_status );        
   ttracker.SetBranchAddress( "E_muon_v",         &pmuon_energy );
   ttracker.SetBranchAddress( "E_proton_v",       &pproton_energy );
+  ttracker.SetBranchAddress( "Length_v",         &plength_v );
+  ttracker.SetBranchAddress( "Avg_Ion_v",        &pave_ion_v );
 
   std::string inputlist_tracker = pset.get<std::string>("TrackerInputlist");
   std::ifstream tracker_flist( inputlist_tracker );
@@ -272,6 +277,7 @@ int main(int nargs, char** argv ) {
     larlite::event_pfpart*  ev_pfpart  = (larlite::event_pfpart*) dataco_showerreco.get_larlite_data( larlite::data::kPFParticle, "dl" );    
     larlite::event_cluster* ev_cluster = (larlite::event_cluster*)dataco_showerreco.get_larlite_data( larlite::data::kCluster,    "dl" );
     larlite::event_shower*  ev_shower  = (larlite::event_shower*) dataco_showerreco.get_larlite_data( larlite::data::kShower,     "dl" );
+    larlite::event_track*   ev_track   = (larlite::event_track*) dataco_showerreco.get_larlite_data( larlite::data::kTrack,       "dl" );    
     larlite::event_shower*  ev_shreco  = (larlite::event_shower*) dataco_showerreco.get_larlite_data( larlite::data::kShower,     "showerreco" );        
 
     nshowers = ev_shreco->size();
@@ -289,8 +295,15 @@ int main(int nargs, char** argv ) {
       std::cout << "  has cluster: " << ev_cluster->size() << std::endl;
     if ( ev_vertex->size() )
       std::cout << "  has vertex: " << ev_vertex->size() << std::endl;
-    
+    if ( ev_track->size() )
+      std::cout << "  has track: " << ev_track->size() << std::endl;
 
+
+    if ( preco_status->front()!=1 ) {
+      std::cout << "  Bad Track Reco Status" << std::endl;
+      continue;
+    }
+    
     if ( hasMC ) {
       ULong_t showerbytes = tshower.GetEntryWithIndex( run, event );
       if ( showerbytes==0 ) {
@@ -326,6 +339,13 @@ int main(int nargs, char** argv ) {
     // get positions 
     float maxstepsize = 0.3;
 
+    const larlite::track& lltrack = ev_track->front();
+    std::cout << "  track (shreco): "
+	      << " npts=" << lltrack.NumberTrajectoryPoints()
+	      << " start=(" << lltrack.Vertex().X() << "," << lltrack.Vertex().Y() << "," << lltrack.Vertex().Z() << ")"
+	      << " end=(" << lltrack.End().X() << "," << lltrack.End().Y() << "," << lltrack.End().Z() << ")"      
+	      << std::endl;
+    
     // proton (from tracker)
     std::cout << "  proton "
 	      << " start=(" << proton_startpt[0] << "," << proton_startpt[1] << "," << proton_startpt[2] << ") -> "
@@ -351,17 +371,23 @@ int main(int nargs, char** argv ) {
 	      << std::endl;
       
     
-    int nsteps = plen/maxstepsize+1;
-    float step = plen/float(nsteps);
-    for (int istep=0; istep<=nsteps; istep++) {
-      float pos[3];
-      for (int i=0; i<3; i++)
-	pos[i] = proton_startpt[i] + (step*istep)*pdir[i];
-      float numphotons = proton_dedx*step*19200;
-      flashana::QPoint_t qpt( pos[0], pos[1], pos[2], numphotons );
-      qinteraction.push_back( qpt );
-      qproton.push_back( qpt );
-    }
+    // int nsteps = plen/maxstepsize+1;
+    // float step = plen/float(nsteps);
+    int nsteps;
+    float step;
+    // for (int istep=0; istep<=nsteps; istep++) {
+    //   float pos[3];
+    //   for (int i=0; i<3; i++)
+    // 	pos[i] = proton_startpt[i] + (step*istep)*pdir[i];
+    //   float numphotons = proton_dedx*step*19200;
+    //   flashana::QPoint_t qpt( pos[0], pos[1], pos[2], numphotons );
+    //   qinteraction.push_back( qpt );
+    //   qproton.push_back( qpt );
+    // }
+    // proton at single point for now
+    float numphotons_proton = 19200.0*(*pproton_energy).front();
+    flashana::QPoint_t qptproton( vtx.X(), vtx.Y(), vtx.Z(), numphotons_proton );
+    qproton.push_back( qptproton );
     
     
     // make shower qcluser: each point corresponds to the number of photons
