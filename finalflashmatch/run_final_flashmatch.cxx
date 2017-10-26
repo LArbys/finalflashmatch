@@ -56,7 +56,7 @@ int main(int nargs, char** argv ) {
   
   // Setup config
   // ------------
-  std::string cfg_file = "ffmatch.cfg";
+  std::string cfg_file = argv[1];
 
   // tagger routine configuration
   larcv::PSet cfg  = larcv::CreatePSetFromFile( cfg_file );
