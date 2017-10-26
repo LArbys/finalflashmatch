@@ -70,7 +70,8 @@ int main(int nargs, char** argv ) {
   // Opreco data
   larlitecv::DataCoordinator dataco_opreco; // this should load opreco and ssnet file, then we have fucking everything
   std::string inputlist_opreco = pset.get<std::string>("LArLiteOpRecoFilelist",  "larlite" );
-  dataco_opreco.add_inputfile( "extbnb_example2/larlite_opreco_55010101.root",   "larlite" );
+  //dataco_opreco.add_inputfile( "extbnb_example2/larlite_opreco_55010101.root",   "larlite" );
+  dataco_opreco.set_filelist( inputlist_opreco, "larlite" );
   dataco_opreco.initialize();
 
   // shower reco data: the driver
