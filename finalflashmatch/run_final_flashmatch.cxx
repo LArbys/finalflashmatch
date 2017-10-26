@@ -4,6 +4,7 @@
 #include <sstream>
 
 // ROOT
+#include "TFile.h"
 #include "TChain.h"
 #include "TBranch.h"
 #include "TH1D.h"
@@ -48,6 +49,11 @@ int main(int nargs, char** argv ) {
   // shower reco file: tree with larlite info: flash and mctruth (filtered)
   // larlite opreco file: tree with flashes (unfiltered)
 
+  if ( nargs!=2 ) {
+    std::cout << "usage: ./run_final_flashmatch [cfg file]" << std::endl;
+    return -1;
+  }
+  
   // Setup config
   // ------------
   std::string cfg_file = "ffmatch.cfg";
@@ -63,18 +69,22 @@ int main(int nargs, char** argv ) {
   
   // Opreco data
   larlitecv::DataCoordinator dataco_opreco; // this should load opreco and ssnet file, then we have fucking everything
-  //dataco_opreco.configure( cfg_file, "StorageManager", "IOManager", "FFMatch" );
-  dataco_opreco.add_inputfile( "1e1p_example/larlite_opreco_104036068.root",   "larlite"   );
-  //dataco_opreco.add_inputfile( "1e1p_example/ssnetout_larcv_104036068.root",   "larcv"   );    
+  std::string inputlist_opreco = pset.get<std::string>("LArLiteOpRecoFilelist",  "larlite" );
+  dataco_opreco.add_inputfile( "extbnb_example2/larlite_opreco_55010101.root",   "larlite" );
   dataco_opreco.initialize();
 
   // shower reco data: the driver
   larlitecv::DataCoordinator dataco_showerreco;
-  //dataco_showerreco.configure( cfg_file, "StorageManager", "IOManager", "FFMatch" );  
-  dataco_showerreco.add_inputfile( "1e1p_example/shower_reco_out_104036068.root",  "larlite"   );
-  dataco_showerreco.add_inputfile( "1e1p_example/ssnetout_larcv_104036068.root",   "larcv"   );      
+  std::string inputlist_showerreco = pset.get<std::string>("LArLiteShowerFilelist");
+  std::string inputlist_ssnet      = pset.get<std::string>("LArCVSSNetFilelist");  
+  dataco_showerreco.set_filelist( inputlist_showerreco,  "larlite"   );
+  dataco_showerreco.set_filelist( inputlist_ssnet,       "larcv"   );
   dataco_showerreco.initialize();
 
+
+  // Setup config
+  // ------------
+  
   // proton 3d reco
   TChain ttracker("_recoTree");
   std::vector<int> *preco_status = 0;
@@ -90,14 +100,49 @@ int main(int nargs, char** argv ) {
   ttracker.SetBranchAddress( "ProtonEndPoint_Z", &proton_endpt[2] );
   ttracker.SetBranchAddress( "Reco_goodness_v",  &preco_status );
   ttracker.SetBranchAddress( "E_muon_v",         &pmuon_energy );
-  ttracker.SetBranchAddress( "E_proton_v",       &pproton_energy );  
-  ttracker.Add( "1e1p_example/tracker_anaout_104036068.root" );  
+  ttracker.SetBranchAddress( "E_proton_v",       &pproton_energy );
 
+  std::string inputlist_tracker = pset.get<std::string>("TrackerInputlist");
+  std::ifstream tracker_flist( inputlist_tracker );
+  char trackerbuf[2056];
+  std::vector<std::string> tracker_flist_v;  
+  do {
+    tracker_flist >> trackerbuf;
+    std::string tmp = trackerbuf;
+    if ( !tmp.empty() )
+      tracker_flist_v.push_back( tmp );
+    else
+      break;
+  } while( tracker_flist.good() && !tracker_flist.eof() );
+      
+  for ( auto const& tracker_file : tracker_flist_v )
+    ttracker.Add( tracker_file.c_str() );
+  ttracker.BuildIndex( "run", "event" );
+  
+
+  // laod input shower list
+  std::string inputlist_showerqual = pset.get<std::string>("ShowerqualInputlist");
+  std::ifstream showerqual_flist( inputlist_showerqual );
+  char showerqualbuf[2056];
+  std::vector<std::string> showerqual_flist_v;  
+  do {
+    showerqual_flist >> showerqualbuf;
+    std::string tmp = showerqualbuf;
+    if ( !tmp.empty() )
+      showerqual_flist_v.push_back( tmp );
+    else
+      break;
+  } while( showerqual_flist.good() && !showerqual_flist.eof() );
+        
+  
   // shower info
   TChain tevshower("fEventTree_nueshowers");
   int nshowers;
   tevshower.SetBranchAddress("n_recoshowers", &nshowers);
-  tevshower.Add( "1e1p_example/showerqualsingle_104036068.root" );  
+  for ( auto const& showerqual_file : showerqual_flist_v )
+    tevshower.Add( showerqual_file.c_str() );
+  tevshower.BuildIndex("run","event");
+  
 
   // shower reco
   TChain tshower("fShowerTree_nueshowers");
@@ -105,8 +150,8 @@ int main(int nargs, char** argv ) {
   double shower_pos[3];
   double shower_energy[3];
   double shower_len;
-  double shower_mclen;
-  double shower_mcenergy;
+  double shower_mclen = -1.0;
+  double shower_mcenergy = -1.0;
   tshower.SetBranchAddress("reco_x",     &shower_pos[0]);
   tshower.SetBranchAddress("reco_y",     &shower_pos[1]);
   tshower.SetBranchAddress("reco_z",     &shower_pos[2]);
@@ -118,12 +163,17 @@ int main(int nargs, char** argv ) {
   tshower.SetBranchAddress("reco_energy_Y", &shower_energy[2]);  
   tshower.SetBranchAddress("shower_len", &shower_len);
   tshower.SetBranchAddress("mc_length",  &shower_mclen);
-  tshower.SetBranchAddress("mc_energy",  &shower_mcenergy);    
-  tshower.Add("1e1p_example/showerqualsingle_104036068.root");
-  tshower.BuildIndex( "event", "subrun" );
+  tshower.SetBranchAddress("mc_energy",  &shower_mcenergy);
 
+  for ( auto const& showerqual_file : showerqual_flist_v )
+    tshower.Add( showerqual_file.c_str() );
+  tshower.BuildIndex("run","event");
+  
+  // =========================
   // output file
-  TFile out("output_finalflash.root","recreate");
+  // -------------------------
+  std::string outfile = pset.get<std::string>("OutputFilepath");
+  TFile out( outfile.c_str(),"recreate");
   TTree outtree("ffmatch","Final Flash Match result");
   float best_chi2;
   float best_data_totpe;
@@ -151,10 +201,12 @@ int main(int nargs, char** argv ) {
   larcv::PSet genflash_pset = pset.get<larcv::PSet>("GeneralFlashMatchAlgo");
   larlitecv::GeneralFlashMatchAlgoConfig genflash_cfg = larlitecv::GeneralFlashMatchAlgoConfig::MakeConfigFromPSet( genflash_pset );
   larlitecv::GeneralFlashMatchAlgo genflashmatch( genflash_cfg );
+  float shower_correction_factor = pset.get<float>("ShowerCorrectionFactor");
+  bool hasMC  = pset.get<bool>("HasMC");
 
   // Setup the tracker
   larcv::AStarTracker astracker_algo;
-  std::string _spline_file="../LArCV/app/Reco3D/Proton_Muon_Range_dEdx_LAr_TSplines.root";
+  std::string _spline_file=pset.get<std::string>("TrackerSplineFile"); // example: "../LArCV/app/Reco3D/Proton_Muon_Range_dEdx_LAr_TSplines.root";
   astracker_algo.SetSplineFile(_spline_file);
   astracker_algo.initialize();
   astracker_algo.SetCompressionFactors(1,6);
@@ -207,8 +259,8 @@ int main(int nargs, char** argv ) {
     larlite::event_vertex*  ev_vertex  = (larlite::event_vertex*) dataco_showerreco.get_larlite_data( larlite::data::kVertex,     "dl" );
     larlite::event_pfpart*  ev_pfpart  = (larlite::event_pfpart*) dataco_showerreco.get_larlite_data( larlite::data::kPFParticle, "dl" );    
     larlite::event_cluster* ev_cluster = (larlite::event_cluster*)dataco_showerreco.get_larlite_data( larlite::data::kCluster,    "dl" );
-    larlite::event_shower*  ev_shower  = (larlite::event_shower*) dataco_showerreco.get_larlite_data( larlite::data::kShower,    "dl" );
-    larlite::event_shower*  ev_shreco  = (larlite::event_shower*) dataco_showerreco.get_larlite_data( larlite::data::kShower,    "showerreco" );        
+    larlite::event_shower*  ev_shower  = (larlite::event_shower*) dataco_showerreco.get_larlite_data( larlite::data::kShower,     "dl" );
+    larlite::event_shower*  ev_shreco  = (larlite::event_shower*) dataco_showerreco.get_larlite_data( larlite::data::kShower,     "showerreco" );        
         
     std::cout << "  number showers: " << nshowers << std::endl;
     std::cout << "  number of beam-window flashes: " << ev_opflash->size() << std::endl;
@@ -303,10 +355,13 @@ int main(int nargs, char** argv ) {
 	      << " dir=(" << shreco.Direction().X() << "," << shreco.Direction().Y() << "," << shreco.Direction().Z() << ")"
 	      << " dir2=(" << shower_dir[0] << "," << shower_dir[1] << "," << shower_dir[2] << ") "
 	      << " length=" << shreco.Length() << "/" << shower_len
-	      << " mclength=" << shower_mclen
-	      << " mcenergy=" << shower_mcenergy
-	      << " energy=(" << shower_energy[0] << "," << shower_energy[1] << "," << shower_energy[2] << ")"
-	      << std::endl;
+	      << " energy=(" << shower_energy[0] << "," << shower_energy[1] << "," << shower_energy[2] << ")";
+    if ( hasMC ) {
+      std::cout << " mclength=" << shower_mclen
+		<< " mcenergy=" << shower_mcenergy;
+    }
+    std::cout << std::endl;
+    
     if ( shower_energy[2]<1.0 )
       shower_energy[2] = 0.5*(shower_energy[0]+shower_energy[1]);
     shower_energy[2] *= 2.0;
@@ -321,7 +376,7 @@ int main(int nargs, char** argv ) {
       pos[0] = vtx.X() + (step*istep)*shower_dir[0];
       pos[1] = vtx.Y() + (step*istep)*shower_dir[1];
       pos[2] = vtx.Z() + (step*istep)*shower_dir[2];      
-      float numphotons = (50.0*step)*20000;
+      float numphotons = (shower_correction_factor*step)*20000;
       flashana::QPoint_t qpt( pos[0], pos[1], pos[2], numphotons );
       qinteraction.push_back( qpt );
       qshower.push_back( qpt );
