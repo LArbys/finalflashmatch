@@ -415,7 +415,7 @@ int main(int nargs, char** argv ) {
     std::cout << " shower: used energy=" << used_energy << " used length=" << used_length << std::endl;
     
     nsteps = used_length/maxstepsize+1;
-    step = plen/float(nsteps);
+    step = used_length/float(nsteps);
     for (int istep=0; istep<=nsteps; istep++) {
       double pos[3];
       pos[0] = vtx.X() + (step*istep)*shreco.Direction().X();
