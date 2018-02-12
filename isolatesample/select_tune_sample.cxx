@@ -20,16 +20,17 @@ int main( int nargs, char** argv ) {
   llcv::Processor llcv_proc;
   llcv::InterModule llcvmod;
 
-  auto driver = llcvmod.Driver();
+  llcv::InterDriver& driver = llcvmod.Driver();
   driver.AttachInterFile(INTER_FILE,"vertex_tree");
+  driver.SetOutputFilename("aho_interfile.root");
   //driver.AddSelection(llcv.InterSelToy());
 
   llcv_proc.add_llcv_ana(&llcvmod);
 
   llcv_proc.configure( cfg );
 
-  llcv_proc.dataco().set_outputfile("aho_larcv.root","larcv");
-  llcv_proc.dataco().set_outputfile("aho_larlite.root","larlite");
+  llcv_proc.set_output_lcv_name( "aho_larcv.root" );
+  llcv_proc.set_output_ll_name(  "aho_larlite.root" );
 
   llcv_proc.add_lcv_input_file(SSNET_FILE);
   llcv_proc.add_lcv_input_file(VTX_FILE);
