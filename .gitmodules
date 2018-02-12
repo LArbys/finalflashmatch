@@ -13,3 +13,6 @@
 [submodule "LArOpenCV"]
 	path = LArOpenCV
 	url = https://github.com/nevisub/laropencv
+[submodule "LLCVProcessor"]
+	path = LLCVProcessor
+	url = https://github.com/LArbys/LLCVProcessor.git
